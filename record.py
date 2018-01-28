@@ -16,20 +16,24 @@ RECORD_SECONDS = 10
 WAVE_OUTPUT_FILENAME = "file.wav"
  
 def get_spectrum(recorded_data):
-    spectrum = np.abs(np.fft.fft(recorded_data))
-    spectrum /= 500000
-    freq = np.fft.fftfreq(len(recorded_data), d=1/(RATE * CHANNELS))
-    return freq, spectrum
+    N = int(RECORDED_SIZE / 2)
+    spectrum = np.fft.fft(recorded_data)[:N]
+    spectrum = np.abs(spectrum / 500000)
+    return spectrum
+
+def get_frequencies():
+    N = int(RECORDED_SIZE / 2)
+    return np.fft.fftfreq(RECORDED_SIZE, d=1.0/(RATE * CHANNELS))[:N]
 
 def callback(in_data, frame_count, time_info, flag):
     if flag:
         print("Playback Error: %i" % flag)
 
-    callback.curr_data_mutex.acquire()
+    callback.recroded_data_mutex.acquire()
     try:
-        callback.curr_data = np.fromstring(in_data, dtype=NP_FORMAT)
+        callback.recroded_data = np.fromstring(in_data, dtype=NP_FORMAT)
     finally:
-        callback.curr_data_mutex.release()
+        callback.recroded_data_mutex.release()
 
     callback.frames.append(in_data)
 
@@ -39,17 +43,20 @@ def callback(in_data, frame_count, time_info, flag):
     return None, paContinue
 
 callback.frames = []
-callback.curr_data = []
-callback.curr_data_mutex = Lock()
+callback.buffer = []
+callback.recroded_data = []
+callback.recroded_data_mutex = Lock()
 
 audio = pyaudio.PyAudio()
 
 fig, ax = plt.subplots(1, 1)
 plt.ion()
-x = list(range(2048))
-y = [0] * 2048
+freq = get_frequencies()
+N = int(RECORDED_SIZE / 2)
+y = [0] * N
 ax.set_ylim(0, 10)
-graph, = ax.plot(y)
+ax.set_xlim(0, 1000)
+graph, = ax.plot(freq, y)
  
 # start Recording
 stream = audio.open(format=PYAUDIO_FORMAT, 
@@ -60,17 +67,17 @@ stream = audio.open(format=PYAUDIO_FORMAT,
                     stream_callback = callback)
 print("recording...")
  
-curr_data = []
+data = []
 while stream.is_active():
-    callback.curr_data_mutex.acquire()
+    callback.recroded_data_mutex.acquire()
     try:
-        curr_data = list(callback.curr_data)
+        data = list(callback.recroded_data)
     finally:
-        callback.curr_data_mutex.release()
+        callback.recroded_data_mutex.release()
 
-    if len(curr_data) == RECORDED_SIZE:
-        freq, spectrum = get_spectrum(curr_data)
-        graph.set_data(freq, spectrum)
+    if len(data) == RECORDED_SIZE:
+        spectrum = get_spectrum(data)
+        graph.set_ydata(spectrum)
 
     plt.pause(0.1)
 
