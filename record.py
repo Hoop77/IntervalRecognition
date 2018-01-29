@@ -14,8 +14,10 @@ CHUNK = 1024
 INPUT_SIZE = CHUNK * CHANNELS
 RECORDED_FRAMES = 32
 RECORDED_SIZE = RECORDED_FRAMES * INPUT_SIZE
-RECORD_SECONDS = 20
-WAVE_OUTPUT_FILENAME = "file.wav"
+THRESHOLD = 1.5
+WINDOW_SIZE = 10
+SLEEP_TIME = 0.01
+UPDATE_UI = False
 
 def freq_of_tone(tone):
     return 440 * (np.power(np.power(2, 1./12.), tone-49))
@@ -53,6 +55,34 @@ def comp(freq, l, r):
 def get_nearest_tone(freq):
     return comp(freq, 0, len(tones) - 1)
 
+def rotate_left(l, n):
+    return l[n:] + l[:n]
+
+class Window:
+    def __init__(self, size=WINDOW_SIZE):
+        self.data = [None] * size
+
+    def put(self, tone):
+        self.data = rotate_left(self.data, 1)
+        self.data[-1] = tone
+
+    def get(self):
+        weights = {}
+        # currently uniform weights
+        w = 1. / len(self.data)
+        # assign weights to each element in data
+        for el in self.data:
+            if el not in weights:
+                weights[el] = w
+            else:
+                weights[el] += w
+        result = self.data[0]
+        # find element with max weight
+        for el, weight in weights.items():
+            if weight > weights[result]:
+                result = el
+        return result
+
 def get_spectrum(recorded_data):
     N = int(RECORDED_SIZE / 2)
     spectrum = np.fft.fft(recorded_data)[:N]
@@ -63,29 +93,49 @@ def get_frequencies():
     N = int(RECORDED_SIZE / 2)
     return np.fft.fftfreq(RECORDED_SIZE, d=1.0/(RATE * CHANNELS))[:N]
 
+def linear_filter(x, freq=(50, 100), gain=(0., 1.)):
+    start_freq = freq[0]
+    end_freq = freq[1]
+    start_gain = gain[0]
+    end_gain = gain[1]
+
+    if x <= start_freq:
+        return start_gain
+    elif x >= end_freq:
+        return end_gain
+    else:
+        return start_gain + ((end_gain - start_gain) * ((x - start_freq) / (end_freq - start_freq)))
+
+def highpass_filter(frequencies, spectrum):
+    for i, x in enumerate(frequencies):
+        spectrum[i] *= linear_filter(x, (100, 300), (0, 1.))
+
 def callback(in_data, frame_count, time_info, flag):
     if flag:
         print("Playback Error: %i" % flag)
+
+    callback.frames.append(in_data)
 
     if len(callback.frames ) >= RECORDED_FRAMES:
         callback.recorded_data_mutex.acquire()
         try:
             callback.recorded_data = np.array([])
-            for frame in callback.frames[-RECORDED_FRAMES:]:
+            for frame in callback.frames:
                 callback.recorded_data = np.append(callback.recorded_data, np.fromstring(frame, dtype=NP_FORMAT))
         finally:
             callback.recorded_data_mutex.release()
-
-    callback.frames.append(in_data)
-
-    if len(callback.frames) >= RATE / CHUNK * RECORD_SECONDS:
-        return None, paComplete
+        
+        callback.frames = []
 
     return None, paContinue
 
 callback.frames = []
 callback.recorded_data = np.array([])
 callback.recorded_data_mutex = Lock()
+
+window = Window()
+num_tones_recognized = 0
+last_tone = None
 
 audio = pyaudio.PyAudio()
 
@@ -95,9 +145,11 @@ plt.tight_layout()
 frequencies = get_frequencies()
 N = int(RECORDED_SIZE / 2)
 y = [0] * N
+threshold = [THRESHOLD] * len(frequencies)
 ax.set_ylim(0, 10)
 ax.set_xlim(0, 4500)
-graph, = ax.plot(frequencies, y)
+spectrum_graph, = ax.plot(frequencies, y)
+threshold_graph, = ax.plot(frequencies, threshold, color=(1, 0, 0, 1))
 
 # start Recording
 stream = audio.open(format=PYAUDIO_FORMAT, 
@@ -118,22 +170,33 @@ while stream.is_active():
 
     if len(data) == RECORDED_SIZE:
         spectrum = get_spectrum(data)
-        strongest_freq = frequencies[np.argmax(spectrum)]
-        true_freq = get_nearest_tone(strongest_freq)
-        tone_label = label_of_tone[true_freq]
-        print("current tone: {} @{:.02f} Hz (perfect tone @{:.02f} Hz)".format(tone_label, strongest_freq, true_freq))
+        highpass_filter(frequencies, spectrum)
+        idx = np.argmax(spectrum)
+        strongest_freq = frequencies[idx]
+        strongest_amplitude = spectrum[idx]
 
-        #graph.set_ydata(spectrum)
-        #plt.pause(0.01)
+        nearest_tone = get_nearest_tone(strongest_freq)
+        tone_label = label_of_tone[nearest_tone]
+        #print("Your tone: {} @{:.02f} Hz (perfect tone @{:.02f} Hz)".format(tone_label, strongest_freq, nearest_tone))
 
-    sleep(0.01)
+        if strongest_amplitude < THRESHOLD:
+            window.put(None)
+        else:
+            window.put(nearest_tone)
+        
+        curr_tone = window.get()
+        if curr_tone is not last_tone:
+            if curr_tone is None:
+                print("Silence")
+            else:
+                print("#{} Current tone: {}".format(num_tones_recognized, label_of_tone[curr_tone]))
+                num_tones_recognized += 1
+            last_tone = curr_tone
+
+        if UPDATE_UI:
+            spectrum_graph.set_ydata(spectrum)
+            threshold_graph.set_ydata(threshold)
+            plt.pause(SLEEP_TIME)
 
 stream.close()
 audio.terminate()
- 
-waveFile = wave.open(WAVE_OUTPUT_FILENAME, 'wb')
-waveFile.setnchannels(CHANNELS)
-waveFile.setsampwidth(audio.get_sample_size(PYAUDIO_FORMAT))
-waveFile.setframerate(RATE)
-waveFile.writeframes(b''.join(callback.frames))
-waveFile.close()
