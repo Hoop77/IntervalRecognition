@@ -12,7 +12,7 @@ CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 INPUT_SIZE = CHUNK * CHANNELS
-RECORDED_FRAMES = 8
+RECORDED_FRAMES = 32
 RECORDED_SIZE = RECORDED_FRAMES * INPUT_SIZE
 RECORD_SECONDS = 20
 WAVE_OUTPUT_FILENAME = "file.wav"
@@ -118,11 +118,15 @@ while stream.is_active():
 
     if len(data) == RECORDED_SIZE:
         spectrum = get_spectrum(data)
-        graph.set_ydata(spectrum)
         strongest_freq = frequencies[np.argmax(spectrum)]
-        print("current tone: {} with frequency: {:.02f}".format(label_of_tone[get_nearest_tone(strongest_freq)], strongest_freq))
+        true_freq = get_nearest_tone(strongest_freq)
+        tone_label = label_of_tone[true_freq]
+        print("current tone: {} @{:.02f} Hz (perfect tone @{:.02f} Hz)".format(tone_label, strongest_freq, true_freq))
 
-    plt.pause(0.01)
+        #graph.set_ydata(spectrum)
+        #plt.pause(0.01)
+
+    sleep(0.01)
 
 stream.close()
 audio.terminate()
