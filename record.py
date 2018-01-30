@@ -12,13 +12,13 @@ CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 INPUT_SIZE = CHUNK * CHANNELS
-RECORDED_FRAMES = 16
+RECORDED_FRAMES = 64
 RECORDED_SIZE = RECORDED_FRAMES * INPUT_SIZE
 AMPLITUDE_THRESHOLD = 2.5
-WINDOW_SIZE = 20
+WINDOW_SIZE = 10
 SLEEP_TIME = 0.01
-UPDATE_UI = True
-INTERVAL_THRESHOLD = 100. # in cent (100 cent == minor second)
+UPDATE_UI = False
+INTERVAL_TOLERANCE = 100. # in cent (100 cent == minor second)
 
 def freq_of_tone_idx(tone_idx):
     return 440 * (np.power(np.power(2, 1./12.), tone_idx-49))
@@ -84,7 +84,7 @@ def make_nearest_tone_of_frequency_dict(frequencies):
     result = {}
     for freq in frequencies:
         nearest_tone = get_nearest_tone(freq)
-        if interval_to_cent(nearest_tone, freq) > INTERVAL_THRESHOLD:
+        if interval_to_cent(nearest_tone, freq) > INTERVAL_TOLERANCE:
             nearest_tone = None
         result[freq] = nearest_tone
     return result
@@ -214,7 +214,7 @@ while stream.is_active():
     if len(data) == RECORDED_SIZE:
         spectrum = get_spectrum(data)
         #logarithmic_highpass_filter(frequencies, spectrum)
-        linear_highpass_filter(frequencies, spectrum, (100, 300))
+        linear_highpass_filter(frequencies, spectrum, (50, 100))
         #threshold_filter(spectrum, AMPLITUDE_THRESHOLD)
         max_amplitude = max(spectrum)
 
