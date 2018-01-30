@@ -12,15 +12,25 @@ CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 INPUT_SIZE = CHUNK * CHANNELS
-RECORDED_FRAMES = 32
+RECORDED_FRAMES = 16
 RECORDED_SIZE = RECORDED_FRAMES * INPUT_SIZE
-THRESHOLD = 1.5
-WINDOW_SIZE = 10
+AMPLITUDE_THRESHOLD = 2.5
+WINDOW_SIZE = 20
 SLEEP_TIME = 0.01
-UPDATE_UI = False
+UPDATE_UI = True
+INTERVAL_THRESHOLD = 100. # in cent (100 cent == minor second)
 
-def freq_of_tone(tone):
-    return 440 * (np.power(np.power(2, 1./12.), tone-49))
+def freq_of_tone_idx(tone_idx):
+    return 440 * (np.power(np.power(2, 1./12.), tone_idx-49))
+
+def interval_to_cent(freq1, freq2):
+    high_freq = max(freq1, freq2)
+    low_freq = min(freq1, freq2)
+    if low_freq == 0.:
+        return float('inf')
+    return 1200. * np.log2(high_freq / low_freq)
+
+print(interval_to_cent(1108.73, 1174.66))
 
 tone_labels = [
     "C0", "C#0", "D0", "D#0", "E0", "F0", "F#0", "G0", "G#0", "A0", "A#0", "B0",
@@ -33,8 +43,13 @@ tone_labels = [
     "C7", "C#7", "D7", "D#7", "E7", "F7", "F#7", "G7", "G#7", "A7", "A#7", "B7",
     "C8"
 ]
-tones = [freq_of_tone(tone) for tone in range(-8, 88+1)]
+tones = [freq_of_tone_idx(tone) for tone in range(-8, 88+1)]
 label_of_tone = {tones[i]: tone_labels[i] for i in range(len(tones))}
+
+tone_series_labels = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+tone_series = [tones[i::12] for i in range(12)]
+
+series_idx_of_tone = {tone: (i % 12) for i, tone in enumerate(tones)}
 
 def comp(freq, l, r):
     m = l + int((r - l) / 2)
@@ -54,6 +69,40 @@ def comp(freq, l, r):
 
 def get_nearest_tone(freq):
     return comp(freq, 0, len(tones) - 1)
+
+def get_spectrum(recorded_data):
+    N = int(RECORDED_SIZE / 2)
+    spectrum = np.fft.fft(recorded_data)[:N]
+    spectrum = np.abs(spectrum / 500000)
+    return spectrum
+
+def get_frequencies():
+    N = int(RECORDED_SIZE / 2)
+    return np.fft.fftfreq(RECORDED_SIZE, d=1.0/(RATE * CHANNELS))[:N]
+
+def make_nearest_tone_of_frequency_dict(frequencies):
+    result = {}
+    for freq in frequencies:
+        nearest_tone = get_nearest_tone(freq)
+        if interval_to_cent(nearest_tone, freq) > INTERVAL_THRESHOLD:
+            nearest_tone = None
+        result[freq] = nearest_tone
+    return result
+
+frequencies = get_frequencies()
+nearest_tone_of_frequency = make_nearest_tone_of_frequency_dict(frequencies)
+
+def get_tone_series_idx_from_spectrum(frequencies, spectrum):
+    # Add the amplitude of each tone series together and return the series with the maximum sum.
+    # This might be the one with the most impact on a certain tone.
+    series_sum = {series_idx: 0 for series_idx in range(12)}
+    for i, freq in enumerate(frequencies):
+        nearest_tone = nearest_tone_of_frequency[freq]
+        if nearest_tone is None:
+            continue
+        nearest_series_idx = series_idx_of_tone[nearest_tone]
+        series_sum[nearest_series_idx] += spectrum[i]
+    return max(series_sum, key=series_sum.get)
 
 def rotate_left(l, n):
     return l[n:] + l[:n]
@@ -76,22 +125,7 @@ class Window:
                 weights[el] = w
             else:
                 weights[el] += w
-        result = self.data[0]
-        # find element with max weight
-        for el, weight in weights.items():
-            if weight > weights[result]:
-                result = el
-        return result
-
-def get_spectrum(recorded_data):
-    N = int(RECORDED_SIZE / 2)
-    spectrum = np.fft.fft(recorded_data)[:N]
-    spectrum = np.abs(spectrum / 500000)
-    return spectrum
-
-def get_frequencies():
-    N = int(RECORDED_SIZE / 2)
-    return np.fft.fftfreq(RECORDED_SIZE, d=1.0/(RATE * CHANNELS))[:N]
+        return max(weights, key=weights.get)
 
 def linear_filter(x, freq=(50, 100), gain=(0., 1.)):
     start_freq = freq[0]
@@ -106,9 +140,19 @@ def linear_filter(x, freq=(50, 100), gain=(0., 1.)):
     else:
         return start_gain + ((end_gain - start_gain) * ((x - start_freq) / (end_freq - start_freq)))
 
-def highpass_filter(frequencies, spectrum):
+def linear_highpass_filter(frequencies, spectrum, freq=(0, 500), gain=(0., 1.)):
     for i, x in enumerate(frequencies):
-        spectrum[i] *= linear_filter(x, (100, 300), (0, 1.))
+        spectrum[i] *= linear_filter(x, freq, gain)
+
+def logarithmic_highpass_filter(frequencies, spectrum):
+    maxval = np.log2(frequencies[-1] + 1)
+    for i, x in enumerate(frequencies):
+        spectrum[i] *= np.log2(x + 1) / maxval
+
+def threshold_filter(spectrum, threshold):
+    for i, y in enumerate(spectrum):
+        if y < threshold:
+            spectrum[i] = 0.
 
 def callback(in_data, frame_count, time_info, flag):
     if flag:
@@ -135,17 +179,16 @@ callback.recorded_data_mutex = Lock()
 
 window = Window()
 num_tones_recognized = 0
-last_tone = None
+last_series_idx = None
 
 audio = pyaudio.PyAudio()
 
 fig, ax = plt.subplots(1, 1)
 plt.ion()
 plt.tight_layout()
-frequencies = get_frequencies()
 N = int(RECORDED_SIZE / 2)
 y = [0] * N
-threshold = [THRESHOLD] * len(frequencies)
+threshold = [AMPLITUDE_THRESHOLD] * len(frequencies)
 ax.set_ylim(0, 10)
 ax.set_xlim(0, 4500)
 spectrum_graph, = ax.plot(frequencies, y)
@@ -170,33 +213,34 @@ while stream.is_active():
 
     if len(data) == RECORDED_SIZE:
         spectrum = get_spectrum(data)
-        highpass_filter(frequencies, spectrum)
-        idx = np.argmax(spectrum)
-        strongest_freq = frequencies[idx]
-        strongest_amplitude = spectrum[idx]
+        #logarithmic_highpass_filter(frequencies, spectrum)
+        linear_highpass_filter(frequencies, spectrum, (100, 300))
+        #threshold_filter(spectrum, AMPLITUDE_THRESHOLD)
+        max_amplitude = max(spectrum)
 
-        nearest_tone = get_nearest_tone(strongest_freq)
-        tone_label = label_of_tone[nearest_tone]
-        #print("Your tone: {} @{:.02f} Hz (perfect tone @{:.02f} Hz)".format(tone_label, strongest_freq, nearest_tone))
+        series_idx = get_tone_series_idx_from_spectrum(frequencies, spectrum)
 
-        if strongest_amplitude < THRESHOLD:
+        if max_amplitude < AMPLITUDE_THRESHOLD:
             window.put(None)
         else:
-            window.put(nearest_tone)
+            window.put(series_idx)
+            #print("current tone: {}".format(tone_series_labels[series_idx]))
         
-        curr_tone = window.get()
-        if curr_tone is not last_tone:
-            if curr_tone is None:
+        curr_series_idx = window.get()
+        if curr_series_idx is not last_series_idx:
+            if curr_series_idx is None:
                 print("Silence")
             else:
-                print("#{} Current tone: {}".format(num_tones_recognized, label_of_tone[curr_tone]))
+                print("#{} Current tone: {}".format(num_tones_recognized, tone_series_labels[curr_series_idx]))
                 num_tones_recognized += 1
-            last_tone = curr_tone
+            last_series_idx = curr_series_idx
 
         if UPDATE_UI:
             spectrum_graph.set_ydata(spectrum)
             threshold_graph.set_ydata(threshold)
             plt.pause(SLEEP_TIME)
+        else:
+            sleep(SLEEP_TIME)
 
 stream.close()
 audio.terminate()
