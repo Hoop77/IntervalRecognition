@@ -5,6 +5,7 @@ from time import sleep
 from matplotlib import pyplot as plt
 from threading import Lock
 import numpy as np
+from eq import eq
 
 PYAUDIO_FORMAT = pyaudio.paInt16
 NP_FORMAT = np.int16
@@ -17,7 +18,7 @@ RECORDED_SIZE = RECORDED_FRAMES * FRAME_SIZE
 AMPLITUDE_THRESHOLD = 2.0
 WINDOW_SIZE = 10
 SLEEP_TIME = 0.01
-UPDATE_UI = True
+UPDATE_UI = False
 INTERVAL_TOLERANCE = 100. # in cent (100 cent == minor second)
 FREQUENCIES = int(RECORDED_SIZE / 2)
 
@@ -107,38 +108,14 @@ def make_nearest_tone_of_frequency_dict(frequencies):
         result[freq] = nearest_tone
     return result
 
-def linear_filter(x, freq=(50, 100), gain=(0., 1.)):
-    start_freq = freq[0]
-    end_freq = freq[1]
-    start_gain = gain[0]
-    end_gain = gain[1]
-
-    if x <= start_freq:
-        return start_gain
-    elif x >= end_freq:
-        return end_gain
-    else:
-        return start_gain + ((end_gain - start_gain) * ((x - start_freq) / (end_freq - start_freq)))
-
-def linear_highpass_filter(frequencies, spectrum, freq=(0, 500), gain=(0., 1.)):
-    for i, x in enumerate(frequencies):
-        spectrum[i] *= linear_filter(x, freq, gain)
-
-def logarithmic_filter(x, intensity=1., release=1.):
-    return np.log2(np.power((1./intensity) * x, release) + 1)
-
-def logarithmic_highpass_filter(frequencies, spectrum, intensity=1., release=1.):
-    maxval = logarithmic_filter(frequencies[-1], intensity, release)
-    for i, x in enumerate(frequencies):
-        spectrum[i] *= logarithmic_filter(x, intensity, release) / maxval
-
-def make_highpass_filter(frequencies):
-    filter_spectrum = np.array([1.] * len(frequencies))
-    logarithmic_highpass_filter(frequencies, filter_spectrum, intensity=1., release=1.)
-    return filter_spectrum
-
 frequencies = make_frequencies()
-highpass_filter = make_highpass_filter(frequencies)
+
+eq_points = {
+    0: 0,
+    tones[0]: 1,
+}
+eq_filter = eq(frequencies, eq_points)
+
 nearest_tone_of_frequency = make_nearest_tone_of_frequency_dict(frequencies)
 
 def get_tone_series_idx_from_spectrum(frequencies, spectrum):
@@ -226,9 +203,10 @@ threshold = [AMPLITUDE_THRESHOLD] * len(frequencies)
 ax.set_ylim(0, 50)
 ax.set_xlim(0, 2000)
 
-spectrum_graph, = ax.plot(frequencies, y, color=(0, 0, 1, 0.5))
+original_spectrum_graph, = ax.plot(frequencies, y, color=(0, 0, 0, 0.3))
+modified_spectrum_graph, = ax.plot(frequencies, y, color=(0, 0, 1, 0.5))
 threshold_graph, = ax.plot(frequencies, threshold, color=(1, 0, 0, 1))
-highpass_filter_graph, = ax.plot(frequencies, highpass_filter, color=(0, 1, 0, 1))
+eq_graph, = ax.plot(frequencies, eq_filter, color=(0, 1, 0, 1))
 glines = plot_tone_series("G")
 
 # start Recording
@@ -250,7 +228,11 @@ while stream.is_active():
 
     if len(data) == RECORDED_SIZE:
         spectrum = get_spectrum(data * window_function)
-        spectrum *= highpass_filter
+
+        if UPDATE_UI:
+            original_spectrum = np.copy(spectrum)
+
+        spectrum *= eq_filter
         max_amplitude = max(spectrum)
 
         series_idx = get_tone_series_idx_from_spectrum(frequencies, spectrum)
@@ -272,9 +254,10 @@ while stream.is_active():
 
         if UPDATE_UI:
             update_lines(glines)
-            spectrum_graph.set_ydata(spectrum)
+            original_spectrum_graph.set_ydata(original_spectrum)
+            modified_spectrum_graph.set_ydata(spectrum)
             threshold_graph.set_ydata(threshold)
-            highpass_filter_graph.set_ydata(highpass_filter)
+            eq_graph.set_ydata(eq_filter)
 
             plt.pause(SLEEP_TIME)
         else:
