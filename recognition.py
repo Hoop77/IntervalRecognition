@@ -18,7 +18,7 @@ RECORDED_SIZE = RECORDED_FRAMES * FRAME_SIZE
 AMPLITUDE_THRESHOLD = 2.0
 WINDOW_SIZE = 10
 SLEEP_TIME = 0.01
-UPDATE_UI = True 
+UPDATE_UI = True
 INTERVAL_TOLERANCE = 100. # in cent (100 cent == minor second)
 FREQUENCIES = int(RECORDED_SIZE / 2)
 
@@ -71,7 +71,7 @@ def note_idx_to_interval(note_series_idx0, note_series_idx1):
     if note_series_idx0 <= note_series_idx1:
         return intervals[note_series_idx1 - note_series_idx0]
     else:
-        return intervals[12 - (note_series_idx0 - note_series_idx1)]
+        return intervals[len(note_series) - (note_series_idx0 - note_series_idx1)]
 
 def print_note_series():
     for idx, series in enumerate(note_series):
@@ -99,7 +99,7 @@ def get_nearest_note(freq):
 
 def get_spectrum(recorded_data):
     spectrum = np.fft.fft(recorded_data)[:FREQUENCIES]
-    spectrum = np.abs(spectrum / 500000)
+    spectrum = np.abs(spectrum / 500000)    # TODO: Change factor!
     return spectrum
 
 def make_frequencies():
@@ -118,7 +118,7 @@ frequencies = make_frequencies()
 
 eq_points = {
     0: 0,
-    100: 1
+    100: 1,
 }
 eq_filter = eq(frequencies, eq_points)
 
@@ -158,11 +158,6 @@ class Window:
                 weights[el] += w
         return max(weights, key=weights.get)
 
-def threshold_filter(spectrum, threshold):
-    for i, y in enumerate(spectrum):
-        if y < threshold:
-            spectrum[i] = 0.
-
 def plot_note_series(series_label, color=(1, 0, 1, 0.5)):
     note_series_idx = note_series_labels.index(series_label)
     lines = []
@@ -179,18 +174,14 @@ def callback(in_data, frame_count, time_info, flag):
     if flag:
         print("Playback Error: %i" % flag)
 
-    callback.recorded_data_mutex.acquire()
-    try:
-        # rotate left
-        callback.recorded_data[:-FRAME_SIZE] = callback.recorded_data[FRAME_SIZE:]
-        callback.recorded_data[-FRAME_SIZE:] = np.fromstring(in_data, dtype=NP_FORMAT)
-    finally:
-        callback.recorded_data_mutex.release()
+    # rotate left
+    callback.recorded_data[:-FRAME_SIZE] = callback.recorded_data[FRAME_SIZE:]
+    callback.recorded_data[-FRAME_SIZE:] = np.fromstring(in_data, dtype=NP_FORMAT)
 
     return None, paContinue
 
 callback.recorded_data = np.zeros(RECORDED_SIZE)
-callback.recorded_data_mutex = Lock()
+
 window_function = 0.5 * (1 - np.cos(np.linspace(0, 2*np.pi, RECORDED_SIZE, False)))
 
 window = Window()
@@ -224,16 +215,8 @@ stream = audio.open(format=PYAUDIO_FORMAT,
                     stream_callback = callback)
 print("recording...")
 
-data = np.array([])
 while stream.is_active():
-    callback.recorded_data_mutex.acquire()
-    try:
-        data = np.array(callback.recorded_data)
-    finally:
-        callback.recorded_data_mutex.release()
-
-    if len(data) == RECORDED_SIZE:
-        spectrum = get_spectrum(data * window_function)
+        spectrum = get_spectrum(callback.recorded_data * window_function)
 
         if UPDATE_UI:
             original_spectrum = np.copy(spectrum)
