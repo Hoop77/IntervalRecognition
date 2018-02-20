@@ -16,7 +16,7 @@ FRAME_SIZE = CHUNK * CHANNELS
 RECORDED_FRAMES = 32
 RECORDED_SIZE = RECORDED_FRAMES * FRAME_SIZE
 AMPLITUDE_THRESHOLD = 2.0
-WINDOW_SIZE = 10
+WINDOW_SIZE = 20
 SLEEP_TIME = 0.01
 UPDATE_UI = True
 INTERVAL_TOLERANCE = 100. # in cent (100 cent == minor second)
@@ -182,6 +182,7 @@ def callback(in_data, frame_count, time_info, flag):
 
 callback.recorded_data = np.zeros(RECORDED_SIZE)
 
+# von-Hann window
 window_function = 0.5 * (1 - np.cos(np.linspace(0, 2*np.pi, RECORDED_SIZE, False)))
 
 window = Window()
@@ -216,45 +217,45 @@ stream = audio.open(format=PYAUDIO_FORMAT,
 print("recording...")
 
 while stream.is_active():
-        spectrum = get_spectrum(callback.recorded_data * window_function)
+    spectrum = get_spectrum(callback.recorded_data * window_function)
 
-        if UPDATE_UI:
-            original_spectrum = np.copy(spectrum)
+    if UPDATE_UI:
+        original_spectrum = np.copy(spectrum)
 
-        spectrum *= eq_filter
-        max_amplitude = max(spectrum)
+    spectrum *= eq_filter
+    max_amplitude = max(spectrum)
 
-        series_idx = get_note_series_idx_from_spectrum(frequencies, spectrum)
+    series_idx = get_note_series_idx_from_spectrum(frequencies, spectrum)
 
-        if max_amplitude < AMPLITUDE_THRESHOLD:
-            window.put(None)
+    if max_amplitude < AMPLITUDE_THRESHOLD:
+        window.put(None)
+    else:
+        window.put(series_idx)
+        #print("current note: {}".format(note_series_labels[series_idx]))
+    
+    curr_series_idx = window.get()
+    if curr_series_idx is not last_series_idx:
+        if curr_series_idx is None:
+            print("Silence")
         else:
-            window.put(series_idx)
-            #print("current note: {}".format(note_series_labels[series_idx]))
-        
-        curr_series_idx = window.get()
-        if curr_series_idx is not last_series_idx:
-            if curr_series_idx is None:
-                print("Silence")
+            if last_series_idx is not None:
+                print("#{} Current note: {}, interval: {}".format(num_notes_recognized, note_series_labels[curr_series_idx], note_idx_to_interval(last_series_idx, curr_series_idx)))
             else:
-                if last_series_idx is not None:
-                    print("#{} Current note: {}, interval: {}".format(num_notes_recognized, note_series_labels[curr_series_idx], note_idx_to_interval(last_series_idx, curr_series_idx)))
-                else:
-                    print("#{} Current note: {}".format(num_notes_recognized, note_series_labels[curr_series_idx]))
+                print("#{} Current note: {}".format(num_notes_recognized, note_series_labels[curr_series_idx]))
 
-                num_notes_recognized += 1
-            last_series_idx = curr_series_idx
+            num_notes_recognized += 1
+        last_series_idx = curr_series_idx
 
-        if UPDATE_UI:
-            update_lines(glines)
-            original_spectrum_graph.set_ydata(original_spectrum)
-            modified_spectrum_graph.set_ydata(spectrum)
-            threshold_graph.set_ydata(threshold)
-            eq_graph.set_ydata(eq_filter)
+    if UPDATE_UI:
+        update_lines(glines)
+        original_spectrum_graph.set_ydata(original_spectrum)
+        modified_spectrum_graph.set_ydata(spectrum)
+        threshold_graph.set_ydata(threshold)
+        eq_graph.set_ydata(eq_filter)
 
-            plt.pause(SLEEP_TIME)
-        else:
-            sleep(SLEEP_TIME)
+        plt.pause(SLEEP_TIME)
+    else:
+        sleep(SLEEP_TIME)
 
 stream.close()
 audio.terminate()
