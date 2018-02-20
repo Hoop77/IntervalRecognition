@@ -19,7 +19,7 @@ AMPLITUDE_THRESHOLD = 2.5
 WINDOW_SIZE = 20
 SLEEP_TIME = 0.01
 UPDATE_UI = True
-INTERVAL_TOLERANCE = 100. # in cent (100 cent == minor second)
+INTERVAL_TOLERANCE = 50. # in cent (100 cent == minor second)
 FREQUENCIES = int(RECORDED_SIZE / 2)
 
 def freq_of_note_idx(note_idx):
@@ -137,6 +137,15 @@ def make_bin_size_of_note(frequencies):
     return result
 
 bin_size_of_note = make_bin_size_of_note(frequencies)
+max_bin_size_of_series = [bin_size_of_note[notes[len(notes) - 12 + idx]] for idx, series in enumerate(note_series)]
+
+def print_bin_size_of_note():
+    print("BIN_SIZE_OF_NOTE:")
+    for idx, note in enumerate(notes):
+        print("#{} {}: {}".format(idx, label_of_note[note], bin_size_of_note[note]))
+    print("MAX_BIN_SIZE_OF_SERIES:")
+    for idx, series in enumerate(note_series):
+        print("{}: {}".format(note_series_labels[idx], max_bin_size_of_series[idx]))
 
 def get_note_series_idx_from_spectrum(frequencies, spectrum):
     # Add the amplitude of each note series together and return the series with the maximum sum.
@@ -144,11 +153,12 @@ def get_note_series_idx_from_spectrum(frequencies, spectrum):
     series_sum = {series_idx: 0 for series_idx in range(12)}
     for i, freq in enumerate(frequencies):
         nearest_note = nearest_note_of_frequency[freq]
-        bin_size = bin_size_of_note[nearest_note]
         if nearest_note is None:
             continue
         nearest_series_idx = series_idx_of_note[nearest_note]
-        series_sum[nearest_series_idx] += spectrum[i] / bin_size
+        bin_size = bin_size_of_note[nearest_note]
+        max_bin_size = max_bin_size_of_series[nearest_series_idx]
+        series_sum[nearest_series_idx] += spectrum[i] * (max_bin_size / bin_size)
     return max(series_sum, key=series_sum.get)
 
 class Window:
