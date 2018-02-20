@@ -13,9 +13,9 @@ CHANNELS = 1
 RATE = 44100
 CHUNK = 1024
 FRAME_SIZE = CHUNK * CHANNELS
-RECORDED_FRAMES = 32
+RECORDED_FRAMES = 96
 RECORDED_SIZE = RECORDED_FRAMES * FRAME_SIZE
-AMPLITUDE_THRESHOLD = 2.0
+AMPLITUDE_THRESHOLD = 2.5
 WINDOW_SIZE = 20
 SLEEP_TIME = 0.01
 UPDATE_UI = True
@@ -112,17 +112,31 @@ def make_nearest_note_of_frequency_dict(frequencies):
         if interval_to_cent(nearest_note, freq) > INTERVAL_TOLERANCE:
             nearest_note = None
         result[freq] = nearest_note
-    return result
+    return result        
 
 frequencies = make_frequencies()
+print("delta f: " + str(frequencies[1] - frequencies[0]))
 
 eq_points = {
-    0: 0,
-    100: 1,
+    0: 0.,
+    25.: 0.,
+    26: 1.
 }
 eq_filter = eq(frequencies, eq_points)
 
 nearest_note_of_frequency = make_nearest_note_of_frequency_dict(frequencies)
+
+def make_bin_size_of_note(frequencies):
+    result = {}
+    for freq in frequencies:
+        note = nearest_note_of_frequency[freq]
+        if note not in result:
+            result[note] = 0
+        else:
+            result[note] += 1
+    return result
+
+bin_size_of_note = make_bin_size_of_note(frequencies)
 
 def get_note_series_idx_from_spectrum(frequencies, spectrum):
     # Add the amplitude of each note series together and return the series with the maximum sum.
@@ -130,10 +144,11 @@ def get_note_series_idx_from_spectrum(frequencies, spectrum):
     series_sum = {series_idx: 0 for series_idx in range(12)}
     for i, freq in enumerate(frequencies):
         nearest_note = nearest_note_of_frequency[freq]
+        bin_size = bin_size_of_note[nearest_note]
         if nearest_note is None:
             continue
         nearest_series_idx = series_idx_of_note[nearest_note]
-        series_sum[nearest_series_idx] += spectrum[i]
+        series_sum[nearest_series_idx] += spectrum[i] / bin_size
     return max(series_sum, key=series_sum.get)
 
 class Window:
